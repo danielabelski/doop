@@ -1,0 +1,41 @@
+# One-command self-host: `docker compose up` → http://localhost:4400
+# Set BETTER_AUTH_SECRET (any long random string) before running in earnest:
+#   BETTER_AUTH_SECRET=$(openssl rand -hex 32) docker compose up -d
+services:
+  doop:
+    build: .
+    ports:
+      - '4400:4400'
+    environment:
+      DATABASE_URL: postgres://doop:doop@db:5432/doop
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-change-me-please-not-for-production}
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:4400}
+      # optional — see .env.example for everything else (SMTP, ANTHROPIC_API_KEY, …)
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: doop
+      POSTGRES_PASSWORD: doop
+      POSTGRES_DB: doop
+    volumes:
+      - doop-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U doop']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  doop-pg:
