@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from '../lib/store'
 import { connect, disconnect, sendWs } from '../lib/ws'
-import { api, ApiError, type CanvasMember } from '../lib/api'
+import { api, ApiError, type CanvasMember, type DiscoveredSite } from '../lib/api'
 import { navigate, Logo } from '../App'
 import { Stage } from '../components/Stage'
 import { Board } from '../components/Board'
@@ -316,11 +316,12 @@ export function CanvasPage({ canvasId }: { canvasId: string }) {
         <ImportModal
           canvasId={canvasId}
           onClose={() => setShowImport(false)}
-          onDone={(frameId) => {
+          onDone={(frameIds, failedCount) => {
             setShowImport(false)
             setView('canvas')
-            select(frameId)
-            showToast('Page imported as a frame')
+            select(frameIds[0] ?? null)
+            const imported = frameIds.length === 1 ? '1 page imported' : `${frameIds.length} pages imported`
+            showToast(failedCount ? `${imported} · ${failedCount} failed` : imported)
           }}
         />
       )}
@@ -345,56 +346,255 @@ function ImportModal({
 }: {
   canvasId: string
   onClose: () => void
-  onDone: (frameId: string) => void
+  onDone: (frameIds: string[], failedCount: number) => void
 }) {
   const [url, setUrl] = useState('')
-  const [busy, setBusy] = useState(false)
+  const [wholeSite, setWholeSite] = useState(false)
+  const [discovery, setDiscovery] = useState<DiscoveredSite | null>(null)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [busy, setBusy] = useState<'discovering' | 'importing' | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  async function run() {
+  function errorMessage(caught: unknown, fallback: string) {
+    if (caught instanceof ApiError) return String(caught.body.error ?? fallback)
+    return caught instanceof Error ? caught.message.replace(/^\d+\s*/, '') : fallback
+  }
+
+  function normalizedUrl() {
     const clean = url.trim()
-    if (!clean || busy) return
-    setBusy(true)
+    return /^https?:\/\//i.test(clean) ? clean : `https://${clean}`
+  }
+
+  async function runSinglePage() {
+    if (!url.trim() || busy) return
+    setBusy('importing')
     setError(null)
     try {
-      const frame = await api.importPage(canvasId, /^https?:\/\//i.test(clean) ? clean : `https://${clean}`)
+      const frame = await api.importPage(canvasId, normalizedUrl())
       posthog.capture('page_imported')
-      onDone(frame.id)
+      onDone([frame.id], 0)
     } catch (e) {
-      setError(e instanceof Error ? e.message.replace(/^\d+\s*/, '') : 'import failed')
-      setBusy(false)
+      setError(errorMessage(e, 'import failed'))
+      setBusy(null)
     }
   }
+
+  async function discover() {
+    if (!url.trim() || busy) return
+    setBusy('discovering')
+    setError(null)
+    try {
+      const found = await api.discoverSitePages(canvasId, normalizedUrl())
+      setDiscovery(found)
+      setSelected(new Set(found.pages.map((page) => page.url)))
+      posthog.capture('site_pages_discovered', { page_count: found.pages.length, truncated: found.truncated })
+      setBusy(null)
+    } catch (e) {
+      setError(errorMessage(e, 'page discovery failed'))
+      setBusy(null)
+    }
+  }
+
+  async function importSelected() {
+    if (!discovery || !selected.size || busy) return
+    setBusy('importing')
+    setError(null)
+    const urls = discovery.pages.filter((page) => selected.has(page.url)).map((page) => page.url)
+    try {
+      const result = await api.importSitePages(canvasId, urls)
+      if (!result.frames.length) {
+        const reason = result.failures[0]?.error
+        setError(reason ? `No pages could be imported — ${reason}` : 'No pages could be imported')
+        setBusy(null)
+        return
+      }
+      posthog.capture('website_imported', {
+        requested_count: urls.length,
+        imported_count: result.frames.length,
+        failed_count: result.failures.length,
+      })
+      onDone(
+        result.frames.map((frame) => frame.id),
+        result.failures.length,
+      )
+    } catch (e) {
+      setError(errorMessage(e, 'website import failed'))
+      setBusy(null)
+    }
+  }
+
+  function togglePage(pageUrl: string) {
+    setSelected((current) => {
+      const next = new Set(current)
+      if (next.has(pageUrl)) next.delete(pageUrl)
+      else next.add(pageUrl)
+      return next
+    })
+  }
+
+  const selectedCount = selected.size
 
   return (
     <div className="modal-backdrop" onClick={() => !busy && onClose()}>
       <div className="modal import-modal" onClick={(e) => e.stopPropagation()}>
-        <h2>Import a page</h2>
-        <p className="lede">
-          Paste a URL and it lands on the canvas as a frame — the rendered HTML with every stylesheet inlined. Scripts
-          are stripped, so the snapshot stays editable and commentable like any other frame.
-        </p>
-        <input
-          className="import-url"
-          autoFocus
-          placeholder="https://example.com/pricing"
-          value={url}
-          disabled={busy}
-          onChange={(e) => setUrl(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') run()
-            if (e.key === 'Escape' && !busy) onClose()
-          }}
-        />
-        {error && <p className="import-error">{error}</p>}
-        <div className="close-row">
-          <button className="btn ghost" disabled={busy} onClick={onClose}>
-            Cancel
-          </button>
-          <button className="btn primary" disabled={busy || !url.trim()} onClick={run}>
-            {busy ? 'Importing…' : '⤓ Import'}
-          </button>
-        </div>
+        {!discovery ? (
+          <>
+            <div className="import-heading">
+              <span className="import-kicker">Website capture</span>
+              <h2>Import from the web</h2>
+            </div>
+            <p className="lede">
+              Bring in one page, or discover a whole site and choose the pages you want before anything is added.
+            </p>
+            <label className="import-field-label" htmlFor="import-url">
+              Website URL
+            </label>
+            <input
+              id="import-url"
+              className="import-url"
+              autoFocus
+              placeholder="https://example.com"
+              value={url}
+              disabled={!!busy}
+              onChange={(e) => {
+                setUrl(e.target.value)
+                setError(null)
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  if (wholeSite) discover()
+                  else runSinglePage()
+                }
+                if (e.key === 'Escape' && !busy) onClose()
+              }}
+            />
+            <label className={`site-import-option${wholeSite ? ' on' : ''}`}>
+              <input
+                type="checkbox"
+                checked={wholeSite}
+                disabled={!!busy}
+                onChange={(e) => {
+                  setWholeSite(e.target.checked)
+                  setError(null)
+                }}
+              />
+              <span className="site-import-check" aria-hidden="true">
+                {wholeSite ? '✓' : ''}
+              </span>
+              <span>
+                <span className="site-import-title">
+                  Import the entire website <em>Optional</em>
+                </span>
+                <span className="site-import-copy">Find public pages on the same site, then review the list.</span>
+              </span>
+            </label>
+            <p className="import-footnote">Snapshots stay editable and commentable. Scripts are removed.</p>
+            {error && <p className="import-error">{error}</p>}
+            <div className="close-row">
+              <button className="btn ghost" disabled={!!busy} onClick={onClose}>
+                Cancel
+              </button>
+              <button
+                className="btn primary"
+                disabled={!!busy || !url.trim()}
+                onClick={wholeSite ? discover : runSinglePage}
+              >
+                {busy === 'discovering'
+                  ? 'Finding pages…'
+                  : busy === 'importing'
+                    ? 'Importing…'
+                    : wholeSite
+                      ? 'Find pages →'
+                      : '⤓ Import page'}
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="import-review-head">
+              <div>
+                <span className="import-kicker">Review before import</span>
+                <h2>Choose pages</h2>
+              </div>
+              <span className="import-domain">{new URL(discovery.siteUrl).hostname}</span>
+            </div>
+            <p className="lede">
+              {discovery.pages.length} {discovery.pages.length === 1 ? 'page' : 'pages'} found. Everything is selected
+              by default; uncheck anything you don’t need.
+            </p>
+            <div className="import-selection-bar">
+              <b>
+                {selectedCount} of {discovery.pages.length} selected
+              </b>
+              <span>
+                <button
+                  type="button"
+                  disabled={!!busy}
+                  onClick={() => setSelected(new Set(discovery.pages.map((p) => p.url)))}
+                >
+                  Select all
+                </button>
+                <button type="button" disabled={!!busy} onClick={() => setSelected(new Set())}>
+                  Clear
+                </button>
+              </span>
+            </div>
+            <div className={`import-page-list${busy ? ' busy' : ''}`} role="group" aria-label="Pages to import">
+              {discovery.pages.map((page, index) => {
+                const pageUrl = new URL(page.url)
+                let pathname = pageUrl.pathname
+                try {
+                  pathname = decodeURIComponent(pathname)
+                } catch {
+                  /* Keep the encoded path when a site contains a malformed escape. */
+                }
+                const path = pathname + pageUrl.search
+                return (
+                  <label className="import-page-row" key={page.url}>
+                    <input
+                      type="checkbox"
+                      checked={selected.has(page.url)}
+                      disabled={!!busy}
+                      onChange={() => togglePage(page.url)}
+                    />
+                    <span className="import-page-check" aria-hidden="true">
+                      {selected.has(page.url) ? '✓' : ''}
+                    </span>
+                    <span className="import-page-number">{String(index + 1).padStart(2, '0')}</span>
+                    <span className="import-page-info">
+                      <b>{page.title}</b>
+                      <span>{path || '/'}</span>
+                    </span>
+                  </label>
+                )
+              })}
+            </div>
+            {discovery.truncated && (
+              <p className="import-limit-note">Showing the first 100 pages found. Narrow the starting URL if needed.</p>
+            )}
+            {busy === 'importing' && (
+              <p className="import-progress">Capturing {selectedCount} pages — larger sites can take a few minutes.</p>
+            )}
+            {error && <p className="import-error">{error}</p>}
+            <div className="close-row import-review-actions">
+              <button
+                className="btn ghost"
+                disabled={!!busy}
+                onClick={() => {
+                  setDiscovery(null)
+                  setError(null)
+                }}
+              >
+                ← Back
+              </button>
+              <button className="btn primary" disabled={!!busy || !selectedCount} onClick={importSelected}>
+                {busy === 'importing'
+                  ? `Importing ${selectedCount}…`
+                  : `⤓ Import ${selectedCount} ${selectedCount === 1 ? 'page' : 'pages'}`}
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   )

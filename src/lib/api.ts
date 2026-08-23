@@ -8,6 +8,22 @@ export interface CanvasMember {
   email: string
   owner: boolean
 }
+
+export interface DiscoveredPage {
+  url: string
+  title: string
+}
+
+export interface DiscoveredSite {
+  siteUrl: string
+  pages: DiscoveredPage[]
+  truncated: boolean
+}
+
+export interface WebsiteImportResult {
+  frames: Frame[]
+  failures: { url: string; error: string }[]
+}
 import { getIdentity } from './identity'
 
 function actor() {
@@ -105,6 +121,16 @@ export const api = {
     req(`/api/tasks/${taskId}/feedback`, { method: 'POST', body: JSON.stringify({ text, from: getIdentity().name }) }),
   importPage: (canvasId: string, url: string) =>
     req<Frame>(`/api/canvases/${canvasId}/import`, { method: 'POST', body: JSON.stringify({ url }) }),
+  discoverSitePages: (canvasId: string, url: string) =>
+    req<DiscoveredSite>(`/api/canvases/${canvasId}/import/discover`, {
+      method: 'POST',
+      body: JSON.stringify({ url }),
+    }),
+  importSitePages: (canvasId: string, urls: string[]) =>
+    req<WebsiteImportResult>(`/api/canvases/${canvasId}/import`, {
+      method: 'POST',
+      body: JSON.stringify({ urls }),
+    }),
   agentAllowance: () => req<{ used: number; limit: number; connected: boolean }>('/api/agent-allowance'),
   addCard: (canvasId: string, title: string, agents: string[], attachments?: string[]) =>
     req(`/api/canvases/${canvasId}/cards`, { method: 'POST', body: JSON.stringify({ title, agents, attachments }) }),

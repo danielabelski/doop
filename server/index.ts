@@ -782,21 +782,105 @@ app.post('/api/comments/:id/retry', (req, res) => {
   res.json(actions.retryComment(req.params.id, req.user!.name))
 })
 
-/* import a live web page as a static frame (rendered HTML + inlined CSS) */
+/* Import one page immediately, or discover + import a user-reviewed set of
+   same-site pages. Discovery and capture are separate requests on purpose:
+   nothing gets added to the canvas until the user confirms the page list. */
 const importHits = new Map<string, number[]>()
+function takeImportSlot(userId: string): boolean {
+  const now = Date.now()
+  const hits = (importHits.get(userId) ?? []).filter((t) => now - t < 60_000)
+  if (hits.length >= 5) return false
+  hits.push(now)
+  importHits.set(userId, hits)
+  return true
+}
+
+app.post('/api/canvases/:id/import/discover', async (req, res) => {
+  if (!requireCanvas(req, res, req.params.id)) return
+  try {
+    const { discoverSitePages, assertPublicHttpUrl } = await import('./importer.ts')
+    const url = String(req.body?.url ?? '')
+    assertPublicHttpUrl(url)
+    if (!takeImportSlot(req.user!.id)) return res.status(429).json({ error: 'too many imports — wait a minute' })
+    res.json(await discoverSitePages(url))
+  } catch (e) {
+    res.status(400).json({ error: e instanceof Error ? e.message : 'page discovery failed' })
+  }
+})
+
 app.post('/api/canvases/:id/import', async (req, res) => {
   const canvas = requireCanvas(req, res, req.params.id)
   if (!canvas) return
   try {
-    const { importPage, assertPublicHttpUrl } = await import('./importer.ts')
-    /* validate before consuming a rate-limit slot — typos shouldn't burn quota */
-    assertPublicHttpUrl(String(req.body?.url ?? ''))
-    const now = Date.now()
-    const hits = (importHits.get(req.user!.id) ?? []).filter((t) => now - t < 60_000)
-    if (hits.length >= 5) return res.status(429).json({ error: 'too many imports — wait a minute' })
-    hits.push(now)
-    importHits.set(req.user!.id, hits)
-    const imported = await importPage(String(req.body?.url ?? ''))
+    const { importPage, importSitePages, assertPublicHttpUrl, isSameSiteUrl, MAX_SITE_PAGES } =
+      await import('./importer.ts')
+    const requested: string[] | null = Array.isArray(req.body?.urls)
+      ? (req.body.urls as unknown[]).map((value) => String(value))
+      : null
+
+    if (requested) {
+      if (!requested.length) return res.status(400).json({ error: 'select at least one page' })
+      if (requested.length > MAX_SITE_PAGES) {
+        return res.status(400).json({ error: `a website import is limited to ${MAX_SITE_PAGES} pages` })
+      }
+      /* Validate the whole batch before consuming a slot or opening Chromium. */
+      const validated = requested.map((url) => assertPublicHttpUrl(url))
+      if (validated.some((url) => !isSameSiteUrl(url, validated[0]))) {
+        return res.status(400).json({ error: 'all selected pages must belong to the same website' })
+      }
+      const urls = [...new Set(validated.map((url) => url.href))]
+      if (!takeImportSlot(req.user!.id)) return res.status(429).json({ error: 'too many imports — wait a minute' })
+
+      const captures = await importSitePages(urls)
+      const actor = actions.resolveActor({ name: req.user!.name, kind: 'user' })
+      const frames = []
+      const failures: { url: string; error: string }[] = []
+      const rightmost = canvas.frames.reduce((right, frame) => Math.max(right, frame.x + frame.width), 0)
+      const startX = canvas.frames.length ? rightmost + 80 : 120
+      const columns = 3
+      let column = 0
+      let y = 120
+      let rowHeight = 0
+
+      for (const capture of captures) {
+        if (!capture.page) {
+          failures.push({ url: capture.url, error: capture.error ?? 'import failed' })
+          continue
+        }
+        const imported = capture.page
+        const frame = actions.createFrame(
+          canvas.id,
+          {
+            name: imported.title.slice(0, 80),
+            x: startX + column * (imported.width + 80),
+            y,
+            width: imported.width,
+            height: imported.height,
+            html: imported.html,
+          },
+          actor,
+        )
+        if (!frame) {
+          failures.push({ url: capture.url, error: 'canvas not found' })
+          continue
+        }
+        frames.push(frame)
+        rowHeight = Math.max(rowHeight, imported.height)
+        column++
+        if (column === columns) {
+          column = 0
+          y += rowHeight + 80
+          rowHeight = 0
+        }
+      }
+      return res.json({ frames, failures })
+    }
+
+    const url = String(req.body?.url ?? '')
+    /* Validate before consuming a rate-limit slot — typos shouldn't burn quota. */
+    assertPublicHttpUrl(url)
+    if (!takeImportSlot(req.user!.id)) return res.status(429).json({ error: 'too many imports — wait a minute' })
+    const imported = await importPage(url)
     const actor = actions.resolveActor({ name: req.user!.name, kind: 'user' })
     const frame = actions.createFrame(
       canvas.id,
