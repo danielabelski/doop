@@ -1129,4 +1129,12 @@ server.listen(PORT, () => {
   console.log(`⟡ doop server     http://localhost:${PORT}`)
   console.log(`⟡ mcp endpoint      http://localhost:${PORT}/mcp`)
   console.log(`⟡ websocket         ws://localhost:${PORT}/ws`)
+  /* The Doop Agent failing silently is the one "why is nothing happening?"
+     a self-hoster cannot debug from the UI — board cards and @mentions just
+     sit there. Say so at boot, not only when the first card is queued. */
+  console.log(
+    process.env.ANTHROPIC_API_KEY
+      ? '⟡ doop agent        on'
+      : '⟡ doop agent        off — set ANTHROPIC_API_KEY to enable (agents connected over MCP work regardless)',
+  )
 })
