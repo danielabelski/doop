@@ -22,8 +22,9 @@ activity feed.
 
 - **Design with agents, not prompts-and-refresh** — connect Claude Code (or any MCP client) once,
   then watch it sketch, stream and self-review designs on your canvas, next to your cursor.
-- **A built-in resident design team** — queue a card or @mention an agent; a scripted demo agent
-  performs on your first canvas even without an API key.
+- **A built-in Doop Agent** — queue a card or @mention a role and it designs on its own, no client
+  to connect. Needs an `ANTHROPIC_API_KEY` ([setup](#the-doop-agent)); the first-canvas welcome
+  performance is scripted and runs without one.
 - **True multiplayer** — live cursors, presence, per-frame editing indicators, undo/redo, comments
   pinned to elements, and an activity feed, all over one WebSocket room.
 - **Design memory** — pin exemplar frames, capture decisions, and let the distiller propose durable
@@ -45,8 +46,10 @@ npm run dev
 - API + WebSocket + MCP server: **http://localhost:4400** (the web port proxies `/api`, `/ws`, `/mcp` to it)
 
 Everything works with no configuration: data persists to an embedded Postgres (PGlite) in `data/pg`,
-and every optional integration (SMTP, Anthropic, stock photos, object storage, analytics) degrades
-gracefully until its variable in [.env.example](.env.example) is set.
+and every optional integration (SMTP, stock photos, object storage, analytics) degrades gracefully
+until its variable in [.env.example](.env.example) is set. The one you will most likely want is
+`ANTHROPIC_API_KEY`, which turns on the built-in [Doop Agent](#the-doop-agent) — agents you connect
+yourself over MCP need no key.
 
 Or self-host the production build with Docker:
 
@@ -79,13 +82,57 @@ the frame chip, the working strip, and the task in the Agents panel.
 
 ## Watch an agent design
 
-The first canvas after signup comes with a performance: the resident Doop agent streams a welcome
+The first canvas after signup comes with a performance: the Doop Agent streams a welcome
 design in while you watch — status in the working strip, a task in the panel, a pulsing border on
 the frame it's building.
 
 <p align="center">
-  <img src=".github/assets/agent-live.png" alt="The resident Doop agent streaming a design into a frame, live — working status, agent task panel and pulsing frame border" width="100%">
+  <img src=".github/assets/agent-live.png" alt="The Doop Agent streaming a design into a frame, live — working status, agent task panel and pulsing frame border" width="100%">
 </p>
+
+That welcome performance is **scripted** (`server/demo.ts`) — a pre-authored frame replayed through
+the same machinery real agents use, so it runs with no configuration at all. The Doop Agent proper
+needs a key.
+
+## The Doop Agent
+
+Doop ships a built-in design team that lives in the server and picks work up on its own: queue a
+board card, `@mention` a role on an element comment, or leave feedback on a task, and it runs
+without a human in the loop. Roles (Doop builds; specialists own one pass each — UX, copy, brand,
+accessibility) are defined in [`shared/agents.ts`](shared/agents.ts), and a card can be routed
+through several in order.
+
+It requires an Anthropic API key:
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-...   # in .env, or the environment of your deployment
+```
+
+**Without it the Doop Agent is off**, and it fails quietly by design — queued cards and `@mentions`
+simply wait for some agent to claim them. The startup banner tells you which state you're in:
+
+```
+⟡ doop agent        off — set ANTHROPIC_API_KEY to enable (agents connected over MCP work regardless)
+```
+
+Same key gates the **guideline distiller** ([`server/distill.ts`](server/distill.ts)), which proposes
+durable style rules from your canvas.
+
+**This is separate from connecting your own agent.** Claude Code and any other MCP client authenticate
+over OAuth and run on your own subscription — they need no key here and are never metered. The two are
+complementary: the Doop Agent is the zero-setup path, MCP is the bring-your-own path.
+
+| Variable              | Default                     | What it does                                                   |
+| --------------------- | --------------------------- | -------------------------------------------------------------- |
+| `ANTHROPIC_API_KEY`   | _unset_                     | Enables the Doop Agent and the distiller. Unset = both off     |
+| `RESIDENT_TASK_LIMIT` | `5`                         | Free Doop Agent tasks per account. `0` = none (MCP users only) |
+| `DOOP_AGENT_MODEL`    | `claude-opus-5`             | Model for the Doop Agent                                       |
+| `DOOP_DISTILL_MODEL`  | `claude-haiku-4-5-20251001` | Model for the guideline distiller                              |
+
+`RESIDENT_TASK_LIMIT` is the free-tier meter for the hosted version. It counts only tasks a user
+_initiates_ — feedback replies and retries on existing work stay free — and users who have connected
+their own agent over MCP bypass it entirely. There is no "unlimited" value: self-hosting with your own
+key, set it to a large number, since you're paying Anthropic directly either way.
 
 ## Accounts
 
