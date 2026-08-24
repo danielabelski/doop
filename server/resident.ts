@@ -43,7 +43,9 @@ function getClient(): Anthropic | null {
   if (!process.env.ANTHROPIC_API_KEY) {
     if (!warned) {
       warned = true
-      console.log('[resident] ANTHROPIC_API_KEY not set — resident Doop agent disabled')
+      console.log(
+        '[doop-agent] ANTHROPIC_API_KEY not set — the Doop Agent is disabled, so queued cards and @mentions will not be picked up. See README → "The Doop Agent". Agents connected over MCP are unaffected.',
+      )
     }
     return null
   }
