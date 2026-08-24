@@ -192,7 +192,7 @@ export function Home() {
                   <div className="agent-item-info">
                     <div className="agent-name">{a.name}</div>
                     <div className="agent-sub">
-                      {a.owner ? `belongs to ${a.owner}` : 'resident agent'} · {a.canvases}{' '}
+                      {a.owner ? `belongs to ${a.owner}` : 'built-in agent'} · {a.canvases}{' '}
                       {a.canvases === 1 ? 'canvas' : 'canvases'}
                       {a.lastAt > 0 && ` · ${timeAgo(a.lastAt)}`}
                     </div>

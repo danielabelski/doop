@@ -52,7 +52,7 @@ export function LimitWall({ canvasId, onClose }: { canvasId: string; onClose: ()
         <p className="lede">
           The Doop Agent's first designs were on the house. To keep designing, connect your own agent —{' '}
           <b>Claude Code</b> or <b>Codex</b> takes a minute and runs on your existing subscription, with no limits here.
-          Once it arrives, the resident team unlocks again too.
+          Once it arrives, the Doop Agent unlocks again too.
         </p>
         <ConnectBody canvasId={canvasId} />
         <div className="close-row">
