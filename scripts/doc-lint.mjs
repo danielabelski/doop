@@ -157,9 +157,7 @@ if (claudeMd === null) {
   err('CLAUDE.md is missing')
 } else {
   if (!/^@\.context\/INDEX\.md\s*$/m.test(claudeMd)) {
-    err(
-      'CLAUDE.md must @-import .context/INDEX.md (add "@.context/INDEX.md" as its own line, near the top)',
-    )
+    err('CLAUDE.md must @-import .context/INDEX.md (add "@.context/INDEX.md" as its own line, near the top)')
   }
 
   const lineCount = claudeMd.split('\n').length
@@ -217,9 +215,7 @@ if (indexSrc === null) {
 
   // Rule 4 (WARNING): unlisted docs. See the design note at the top of this
   // file for why this is deliberately not an error.
-  const docsOnDisk = walk(CONTEXT_DIR, (p) => extname(p) === '.md').filter(
-    (p) => resolve(p) !== resolve(indexPath),
-  )
+  const docsOnDisk = walk(CONTEXT_DIR, (p) => extname(p) === '.md').filter((p) => resolve(p) !== resolve(indexPath))
   const unlisted = docsOnDisk
     .map((doc) => relative(CONTEXT_DIR, doc).split('\\').join('/'))
     .filter((rel) => !rootLinkedPaths.has(rel))
@@ -236,13 +232,10 @@ if (indexSrc === null) {
     const prefix = `${dir}/`
     return rel.startsWith(prefix) && !rel.slice(prefix.length).includes('/')
   }
-  const isDirectChildOfChildIndexDir = (rel) =>
-    CHILD_INDEX_DIRS.some((dir) => isDirectChildOf(rel, dir))
+  const isDirectChildOfChildIndexDir = (rel) => CHILD_INDEX_DIRS.some((dir) => isDirectChildOf(rel, dir))
 
   const standingUnlisted = unlisted.filter((rel) => !rel.includes('/'))
-  const nestedUnlisted = unlisted.filter(
-    (rel) => rel.includes('/') && !isDirectChildOfChildIndexDir(rel),
-  )
+  const nestedUnlisted = unlisted.filter((rel) => rel.includes('/') && !isDirectChildOfChildIndexDir(rel))
 
   for (const rel of standingUnlisted) {
     warn(`.context/${rel} is a standing doc but is not linked from .context/INDEX.md`)
@@ -439,14 +432,8 @@ for (const dir of CHILD_INDEX_DIRS) {
 
   // Rule 12 (ERROR): a child index is not @-imported, so a root-index link is
   // the only thing that makes it reachable.
-  if (
-    indexSrc !== null &&
-    !rootLinkedPaths.has(`${dir}/INDEX.md`) &&
-    !rootLinkedPaths.has(`./${dir}/INDEX.md`)
-  ) {
-    err(
-      `.context/INDEX.md does not link to .context/${dir}/INDEX.md, so the ${dir} index is unreachable`,
-    )
+  if (indexSrc !== null && !rootLinkedPaths.has(`${dir}/INDEX.md`) && !rootLinkedPaths.has(`./${dir}/INDEX.md`)) {
+    err(`.context/INDEX.md does not link to .context/${dir}/INDEX.md, so the ${dir} index is unreachable`)
   }
 }
 
