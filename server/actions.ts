@@ -698,6 +698,11 @@ export function endAgentTasks(canvasId: string, agentName: string) {
 /* object — queuedBy set, agentName empty until claimed.               */
 /* ------------------------------------------------------------------ */
 
+/** A card's text is the whole prompt the agent gets — never shorten it for
+ *  display here; the board clamps long headings visually. The cap only stops
+ *  a pasted document from being stored, broadcast and prompted verbatim. */
+export const MAX_CARD_CHARS = 4_000
+
 export function addQueuedCard(
   canvasId: string,
   title: string,
@@ -706,7 +711,7 @@ export function addQueuedCard(
   attachments?: unknown,
   fromUserId?: string,
 ): AgentTask | undefined {
-  const clean = title.trim().slice(0, 200)
+  const clean = title.trim().slice(0, MAX_CARD_CHARS)
   if (!clean || !store.getCanvas(canvasId)) return undefined
   const pipeline = normalizePipeline(agents)
   /* reference-image frame ids: only frames that actually live on this canvas */
@@ -826,7 +831,7 @@ export function addRepoCards(canvasId: string, input: RepoImportInput, from: str
       id: nanoid(8),
       agentName: '',
       color: colorFor(from),
-      status: w.title.slice(0, 200),
+      status: w.title.slice(0, MAX_CARD_CHARS),
       startedAt: at + i,
       queuedBy: from,
       queuedByUserId: fromUserId,
